@@ -44,12 +44,13 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
         data['peso_inteligente'] = distancia * riesgo_eq * factor_esfuerzo
         data['peso_seguro'] = distancia * riesgo_seg * factor_esfuerzo
 
-    # --- SOLUCIÓN AL IMPORTERROR ---
-    # Forzamos que las coordenadas sean floats y manejamos la excepción de búsqueda
+    # --- SOLUCIÓN AL PROBLEMA DE LOCALIZACIÓN ---
     try:
+        # Aseguramos que sean floats para evitar errores de tipo
         lat_o, lon_o = float(p_origen[0]), float(p_origen[1])
         lat_d, lon_d = float(p_destino[0]), float(p_destino[1])
         
+        # X es Longitud (lon), Y es Latitud (lat)
         node_o = ox.distance.nearest_nodes(G, X=lon_o, Y=lat_o)
         node_d = ox.distance.nearest_nodes(G, X=lon_d, Y=lat_d)
     except Exception as e:
@@ -68,7 +69,10 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
 
             for i in range(len(camino)-1):
                 u, v = camino[i], camino[i+1]
-                data_arista = G.get_edge_data(u, v)[0]
+                # Obtenemos los datos de la arista (vía)
+                edge_data = G.get_edge_data(u, v)
+                data_arista = edge_data[0] if isinstance(edge_data, dict) else edge_data
+                
                 dist_tramo = data_arista.get('length', 10)
                 dist_m += dist_tramo
                 
@@ -80,7 +84,7 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
                 if (nombre_calle == calle_actual) or (nombre_calle == 'camino sin nombre'):
                     dist_acumulada += dist_tramo
                 else:
-                    giro = "gira"
+                    giro = "continúa"
                     if i > 0:
                         prev_u = camino[i-1]
                         ang1 = math.atan2(G.nodes[u]['y'] - G.nodes[prev_u]['y'], G.nodes[u]['x'] - G.nodes[prev_u]['x'])
@@ -93,7 +97,8 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
                     calle_actual = nombre_calle
                     dist_acumulada = dist_tramo
 
-            if dist_acumulada > 0: instrucciones.append(f"Continúa **{dist_acumulada/1000:.2f} km** por {calle_actual} hasta tu destino.")
+            if dist_acumulada > 0: 
+                instrucciones.append(f"Continúa **{dist_acumulada/1000:.2f} km** por {calle_actual} hasta tu destino.")
 
             dist_km = dist_m / 1000
             if len(camino) > 1:
@@ -107,7 +112,10 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
                     "instrucciones": instrucciones
                 }
         except nx.NetworkXNoPath:
-            pass # No se encontró ruta para este peso específico
+            # Avisamos si el origen y destino no están conectados en el mapa
+            st.warning(f"No se encontró conexión física en el mapa para la ruta: {nombre}")
+        except Exception as e:
+            st.error(f"Error inesperado al calcular la ruta {nombre}: {e}")
 
     guardar_ruta(" Rápida", 'peso_directo', "#FF3333", "Ruta corta. Se va por avenidas principales.", "🔴 Riesgo Alto")
     guardar_ruta(" Inteligente", 'peso_inteligente', "#0078D7", "Equilibrio ideal entre distancia y calles tranquilas.", "🟡 Riesgo Moderado")
