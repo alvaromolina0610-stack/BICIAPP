@@ -1,0 +1,48 @@
+div.stButton > button:first-child {
+    background: linear-gradient(135deg, #00A86B 0%, #0078D7 100%);
+    color: white !important;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 24px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 168, 107, 0.3);
+}
+
+div.stButton > button:first-child:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0, 168, 107, 0.5);
+    border: none;
+}
+
+div[data-testid="metric-container"] {
+    background-color: #1A1C23;
+    border: 1px solid #2D313A;
+    padding: 15px 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    transition: transform 0.2s ease;
+}
+
+div[data-testid="metric-container"]:hover {
+    transform: translateY(-2px);
+    border-color: #00A86B;
+}
+
+div.stAlert {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.streamlit-expanderHeader {
+    font-size: 1.1rem !important;
+    font-weight: 500 !important;
+    border-radius: 8px !important;
+    background-color: #1A1C23 !important;
+}
+
+footer {
+    visibility: hidden;
+}

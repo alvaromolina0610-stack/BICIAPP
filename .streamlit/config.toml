@@ -1,0 +1,19 @@
+[theme]
+# El color principal para botones y acentos (Mantenemos tu verde esmeralda)
+primaryColor = "#00A86B"
+
+# Fondo general: Un azul marino profundo muy elegante
+backgroundColor = "#0F1A14"
+
+# Fondo para el panel lateral: Un tono azulado que contrasta con el principal
+secondaryBackgroundColor = "#1B2E24"
+
+# Texto en blanco puro para máxima legibilidad
+textColor = "#E0E6ED"
+
+# Fuente moderna y limpia
+font = "sans serif"
+
+[server]
+# Mantenemos tu configuración de servidor
+enableCORS = false
