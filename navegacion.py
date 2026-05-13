@@ -2,12 +2,17 @@ import osmnx as ox
 import networkx as nx
 import streamlit as st
 import math
+import os
 
 @st.cache_resource
 def cargar_mapa():
-    return ox.load_graphml("mapa_zmg.graphml")
+    # Usamos la ruta absoluta para evitar FileNotFoundError en Streamlit Cloud
+    directorio_actual = os.path.dirname(__file__)
+    ruta_mapa = os.path.join(directorio_actual, "mapa_zmg.graphml")
+    return ox.load_graphml(ruta_mapa)
 
 def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actual):
+    # Procesamiento de pesos en el grafo
     for u, v, k, data in G.edges(data=True, keys=True):
         distancia = data.get('length', 1)
         data['peso_directo'] = distancia 
@@ -39,8 +44,18 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
         data['peso_inteligente'] = distancia * riesgo_eq * factor_esfuerzo
         data['peso_seguro'] = distancia * riesgo_seg * factor_esfuerzo
 
-    node_o = ox.distance.nearest_nodes(G, X=p_origen[1], Y=p_origen[0])
-    node_d = ox.distance.nearest_nodes(G, X=p_destino[1], Y=p_destino[0])
+    # --- SOLUCIÓN AL IMPORTERROR ---
+    # Forzamos que las coordenadas sean floats y manejamos la excepción de búsqueda
+    try:
+        lat_o, lon_o = float(p_origen[0]), float(p_origen[1])
+        lat_d, lon_d = float(p_destino[0]), float(p_destino[1])
+        
+        node_o = ox.distance.nearest_nodes(G, X=lon_o, Y=lat_o)
+        node_d = ox.distance.nearest_nodes(G, X=lon_d, Y=lat_d)
+    except Exception as e:
+        st.error(f"Error al localizar los puntos en el mapa: {e}")
+        return {}
+
     rutas_calculadas = {}
 
     def guardar_ruta(nombre, peso_usado, color, descripcion, nivel_seguridad):
@@ -82,10 +97,20 @@ def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actu
 
             dist_km = dist_m / 1000
             if len(camino) > 1:
-                rutas_calculadas[nombre] = {"path": camino, "color": color, "dist_km": dist_km, "tiempo": dist_km * 4, "desc": descripcion, "seguridad": nivel_seguridad, "instrucciones": instrucciones}
-        except: pass
+                rutas_calculadas[nombre] = {
+                    "path": camino, 
+                    "color": color, 
+                    "dist_km": dist_km, 
+                    "tiempo": dist_km * 4, 
+                    "desc": descripcion, 
+                    "seguridad": nivel_seguridad, 
+                    "instrucciones": instrucciones
+                }
+        except nx.NetworkXNoPath:
+            pass # No se encontró ruta para este peso específico
 
     guardar_ruta(" Rápida", 'peso_directo', "#FF3333", "Ruta corta. Se va por avenidas principales.", "🔴 Riesgo Alto")
     guardar_ruta(" Inteligente", 'peso_inteligente', "#0078D7", "Equilibrio ideal entre distancia y calles tranquilas.", "🟡 Riesgo Moderado")
     guardar_ruta(" Segura", 'peso_seguro', "#00A86B", "Navega internamente por colonias residenciales y ciclovías.", "🟢 Muy Segura")
+    
     return rutas_calculadas
