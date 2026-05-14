@@ -1,113 +1,91 @@
-import requests # <
 import osmnx as ox
 import networkx as nx
 import streamlit as st
 import math
-import os
-import requests
 
 @st.cache_resource
 def cargar_mapa():
-    """Carga el grafo desde el archivo local .graphml."""
-    directorio_actual = os.path.dirname(__file__)
-    ruta_mapa = os.path.join(directorio_actual, "mapa_zmg.graphml")
-    return ox.load_graphml(ruta_mapa)
-
-def obtener_estaciones_mibici():
-    """Obtiene datos de MiBici GDL en tiempo real (Bicis y Candados)."""
-    try:
-        # Endpoints oficiales del sistema GBFS de Guadalajara
-        info_url = "https://gdl.publicbikesystem.net/ube/gbfs/v1/en/station_information.json"
-        status_url = "https://gdl.publicbikesystem.net/ube/gbfs/v1/en/station_status.json"
-        
-        info_res = requests.get(info_url, timeout=5).json()
-        status_res = requests.get(status_url, timeout=5).json()
-        
-        # Mapeamos disponibilidad por ID de estación
-        status_dict = {s['station_id']: s for s in status_res['data']['stations']}
-        
-        estaciones = []
-        for s in info_res['data']['stations']:
-            s_id = s['station_id']
-            estaciones.append({
-                'nombre': s['name'],
-                'lat': s['lat'],
-                'lon': s['lon'],
-                'bicis': status_dict.get(s_id, {}).get('num_bikes_available', 0),
-                'candados': status_dict.get(s_id, {}).get('num_docks_available', 0)
-            })
-        return estaciones
-    except Exception:
-        # Retornamos lista vacía para evitar que la app se detenga si la API falla
-        return []
+    return ox.load_graphml("mapa_zmg.graphml")
 
 def calcular_multiples_rutas(G, p_origen, p_destino, zonas_calientes, clima_actual):
-    """Calcula rutas basadas en pesos de distancia, seguridad y esfuerzo físico."""
-    
-    # 1. ACTUALIZACIÓN DE PESOS EN EL GRAFO
     for u, v, k, data in G.edges(data=True, keys=True):
         distancia = data.get('length', 1)
+        data['peso_directo'] = distancia 
         riesgo_eq, riesgo_seg = 1.0, 1.0
 
-        # Atributos de infraestructura
         es_ciclovia = ('bicycle' in data and data['bicycle'] == 'designated') or 'cycleway' in data
         calle_tranquila = 'highway' in data and data['highway'] in ['residential', 'living_street']
         avenida = 'highway' in data and data['highway'] in ['primary', 'secondary', 'trunk']
-        
-        # Altimetría y Esfuerzo (Pendientes)
+        calle_mala = 'surface' in data and any(m in str(data['surface']).lower() for m in ['cobblestone', 'unpaved', 'dirt'])
+
         elev_u = G.nodes[u].get('elevation', 1550) 
         elev_v = G.nodes[v].get('elevation', 1550)
-        pendiente = ((elev_v - elev_u) / distancia) * 100 
+        desnivel = elev_v - elev_u
+        pendiente = (desnivel / distancia) * 100 
 
-        factor_esfuerzo = 1.0 + (max(0, pendiente) * 0.2) if pendiente > 3 else 1.0
+        factor_esfuerzo = 1.0
+        if pendiente > 3: 
+            factor_esfuerzo = 1 + (pendiente * 0.2) 
 
-        # Lógica de Seguridad y Comodidad
-        if es_ciclovia: 
-            riesgo_eq, riesgo_seg = 0.2, 0.05 
-        elif calle_tranquila: 
-            riesgo_eq, riesgo_seg = 0.8, 0.2
-        elif avenida: 
-            riesgo_eq, riesgo_seg = 5.0, 150.0
+        if es_ciclovia: riesgo_eq, riesgo_seg = 0.2, 0.05 
+        elif calle_tranquila: riesgo_eq, riesgo_seg = 0.8, 0.2
+        elif avenida: riesgo_eq, riesgo_seg = 5.0, 150.0
 
-        # Ajuste por Clima (Lluvia)
-        if clima_actual.get('lluvia', False) and 'surface' in data:
-            if any(m in str(data['surface']).lower() for m in ['cobblestone', 'unpaved', 'dirt']):
-                riesgo_eq += 20.0; riesgo_seg += 200.0
+        if calle_mala:
+            riesgo_eq += 4.0; riesgo_seg += 30.0 
+            if clima_actual.get('lluvia', False):
+                riesgo_eq += 20.0; riesgo_seg += 200.0 
 
-        data['peso_directo'] = distancia 
         data['peso_inteligente'] = distancia * riesgo_eq * factor_esfuerzo
         data['peso_seguro'] = distancia * riesgo_seg * factor_esfuerzo
 
-    # 2. LOCALIZACIÓN DE NODOS CERCANOS
-    try:
-        # Aseguramos coordenadas en formato float
-        node_o = ox.distance.nearest_nodes(G, X=float(p_origen[1]), Y=float(p_origen[0]))
-        node_d = ox.distance.nearest_nodes(G, X=float(p_destino[1]), Y=float(p_destino[0]))
-    except Exception:
-        return {}
-
+    node_o = ox.distance.nearest_nodes(G, X=p_origen[1], Y=p_origen[0])
+    node_d = ox.distance.nearest_nodes(G, X=p_destino[1], Y=p_destino[0])
     rutas_calculadas = {}
 
-    # 3. GENERACIÓN DE RUTAS POR PERFIL
     def guardar_ruta(nombre, peso_usado, color, descripcion, nivel_seguridad):
         try:
             camino = nx.astar_path(G, node_o, node_d, weight=peso_usado)
-            # Calculamos la distancia total real
-            dist_m = sum(ox.utils_graph.get_route_edge_attributes(G, camino, 'length'))
-            
-            rutas_calculadas[nombre] = {
-                "path": camino, 
-                "color": color, 
-                "dist_km": dist_m / 1000, 
-                "tiempo": (dist_m / 1000) * 4, # Estimado a 15km/h
-                "desc": descripcion, 
-                "seguridad": nivel_seguridad
-            }
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            pass
+            dist_m = 0
+            instrucciones = []
+            calle_actual = ""
+            dist_acumulada = 0
 
-    guardar_ruta(" Rápida", 'peso_directo', "#FF3333", "Ruta más corta por vías principales.", "🔴 Riesgo Alto")
-    guardar_ruta(" Inteligente", 'peso_inteligente', "#0078D7", "Equilibrio entre distancia y seguridad.", "🟡 Riesgo Moderado")
-    guardar_ruta(" Segura", 'peso_seguro', "#00A86B", "Prioriza ciclovías y calles internas.", "🟢 Muy Segura")
-    
+            for i in range(len(camino)-1):
+                u, v = camino[i], camino[i+1]
+                data_arista = G.get_edge_data(u, v)[0]
+                dist_tramo = data_arista.get('length', 10)
+                dist_m += dist_tramo
+                
+                nombre_calle = data_arista.get('name', 'Punto de partida')
+                if isinstance(nombre_calle, list): nombre_calle = nombre_calle[0]
+                
+                if not calle_actual: calle_actual = nombre_calle
+                
+                if (nombre_calle == calle_actual) or (nombre_calle == 'camino sin nombre'):
+                    dist_acumulada += dist_tramo
+                else:
+                    giro = "gira"
+                    if i > 0:
+                        prev_u = camino[i-1]
+                        ang1 = math.atan2(G.nodes[u]['y'] - G.nodes[prev_u]['y'], G.nodes[u]['x'] - G.nodes[prev_u]['x'])
+                        ang2 = math.atan2(G.nodes[v]['y'] - G.nodes[u]['y'], G.nodes[v]['x'] - G.nodes[u]['x'])
+                        dif = (math.degrees(ang2 - ang1) + 360) % 360
+                        if 30 <= dif <= 160: giro = "gira a la izquierda"
+                        elif 200 <= dif <= 330: giro = "gira a la derecha"
+                    
+                    instrucciones.append(f"Avanza **{dist_acumulada/1000:.2f} km** por {calle_actual} y {giro} hacia **{nombre_calle}**.")
+                    calle_actual = nombre_calle
+                    dist_acumulada = dist_tramo
+
+            if dist_acumulada > 0: instrucciones.append(f"Continúa **{dist_acumulada/1000:.2f} km** por {calle_actual} hasta tu destino.")
+
+            dist_km = dist_m / 1000
+            if len(camino) > 1:
+                rutas_calculadas[nombre] = {"path": camino, "color": color, "dist_km": dist_km, "tiempo": dist_km * 4, "desc": descripcion, "seguridad": nivel_seguridad, "instrucciones": instrucciones}
+        except: pass
+
+    guardar_ruta(" Rápida", 'peso_directo', "#FF3333", "Ruta corta. Se va por avenidas principales.", "🔴 Riesgo Alto")
+    guardar_ruta(" Inteligente", 'peso_inteligente', "#0078D7", "Equilibrio ideal entre distancia y calles tranquilas.", "🟡 Riesgo Moderado")
+    guardar_ruta(" Segura", 'peso_seguro', "#00A86B", "Navega internamente por colonias residenciales y ciclovías.", "🟢 Muy Segura")
     return rutas_calculadas
