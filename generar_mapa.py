@@ -1,48 +1,61 @@
-import folium
-from navegacion import obtener_estaciones_mibici
+import osmnx as ox
+import streamlit as st
+import requests
+import time
 
-def renderizar_mapa_pro(G, ruta_activa, zonas, mostrar_mibici, mostrar_talleres):
-    # Centrado dinámico
-    if ruta_activa and 'path' in ruta_activa:
-        centro = [G.nodes[ruta_activa['path'][0]]['y'], G.nodes[ruta_activa['path'][0]]['x']]
-        zoom = 14
-    else:
-        centro = [20.6767, -103.3475]
-        zoom = 12
+def add_elevations_batch(G, batch_size=100):
+    nodes_to_query = []
+    for node, data in G.nodes(data=True):
+        nodes_to_query.append({"latitude": data['y'], "longitude": data['x']})
+    
+    total_nodes = len(nodes_to_query)
+    st.info(f"Recolectando alturas para {total_nodes} nodos. El servidor puede ser lento, se aplicará lógica de reintentos.")
+    
+    progress_bar = st.progress(0)
+    for i in range(0, total_nodes, batch_size):
+        batch = nodes_to_query[i:i + batch_size]
+        url = "https://api.open-elevation.com/api/v1/lookup"
+        
+        exito = False
+        for intento in range(3): 
+            try:
+                response = requests.post(url, json={"locations": batch}, timeout=15)
+                response.raise_for_status() # Verifica que el servidor no mande error 500
+                data = response.json()
+                
+                results = data['results']
+                for j, res in enumerate(results):
+                    node_to_update = list(G.nodes())[i + j]
+                    G.nodes[node_to_update]['elevation'] = res['elevation']
+                
+                exito = True
+                break 
+                
+            except Exception as e:
+                time.sleep(3) 
+                
+        if not exito:
+            st.error(f"Error definitivo en batch {i} después de 3 intentos. Skipping.")
+            
+        progreso = min(int((i + batch_size) / total_nodes * 100), 100)
+        progress_bar.progress(progreso)
+        st.write(f"Batch {i//batch_size + 1}/{total_nodes//batch_size + 1} procesado.")
 
-    m = folium.Map(location=centro, zoom_start=zoom)
-    folium.TileLayer('openstreetmap').add_to(m)
+    st.success("Alturas pintadas con éxito.")
 
-    # 1. Capa de MiBici
-    if mostrar_mibici:
-        estaciones = obtener_estaciones_mibici()
-        for est in estaciones:
-            # Color según disponibilidad: Azul (hay bicis), Rojo (vacía)
-            color_m = 'blue' if est['bicis'] > 0 else 'red'
-            folium.Marker(
-                [est['lat'], est['lon']],
-                popup=f"<b>{est['nombre']}</b><br>🚲 Bicis: {est['bicis']}<br>🔒 Libres: {est['candados']}",
-                icon=folium.Icon(color=color_m, icon='bicycle', prefix='fa')
-            ).add_to(m)
+st.title("Descargador de Mapa con Altimetría")
+st.write("LONGORIA FLORES CESAR Y PANTOJA ARAIZA ISMAEL")
 
-    # 2. Capa de Talleres
-    if mostrar_talleres:
-        talleres = [
-            {"nombre": "Taller Ciclo-Vías", "coords": [20.674, -103.359]},
-            {"nombre": "Bici-Reparación Tonalá", "coords": [20.624, -103.242]},
-            {"nombre": "Taller El Rayo (Zapopan)", "coords": [20.720, -103.390]}
-        ]
-        for t in talleres:
-            folium.Marker(
-                t['coords'], popup=t['nombre'],
-                icon=folium.Icon(color='orange', icon='wrench', prefix='fa')
-            ).add_to(m)
-
-    # 3. Dibujar Ruta
-    if ruta_activa and 'path' in ruta_activa:
-        coords_ruta = [(G.nodes[n]['y'], G.nodes[n]['x']) for n in ruta_activa['path']]
-        folium.PolyLine(coords_ruta, color=ruta_activa['color'], weight=6).add_to(m)
-        folium.Marker(coords_ruta[0], icon=folium.Icon(color='green', icon='play')).add_to(m)
-        folium.Marker(coords_ruta[-1], icon=folium.Icon(color='red', icon='flag')).add_to(m)
-
-    return m
+if st.button("Descargar y 'Pintar' Alturas a Mapa ZMG (Lento - Gratuito)"):
+    ciudades = ["Guadalajara, Jalisco, Mexico", "Zapopan, Jalisco, Mexico", "San Pedro Tlaquepaque, Jalisco, Mexico", "Tonalá, Jalisco, Mexico"]
+    with st.spinner("Descargando red ciclista de OpenStreetMap..."):
+        G = ox.graph_from_place(ciudades, network_type='bike')
+    
+    st.success("Mapa descargado. Iniciando altimetría (Esto va a tardar muchísimo).")
+    with st.spinner("'Pintando' alturas en lotes con tolerancia a fallos..."):
+        add_elevations_batch(G)
+        
+    with st.spinner("Guardando mapa gigante..."):
+        ox.save_graphml(G, filepath="mapa_zmg.graphml")
+    
+    st.success("¡Listo! Mapa gigante guardado como 'mapa_zmg.graphml'. Puedes usar 'app.py' ahora.")
