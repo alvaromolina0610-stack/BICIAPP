@@ -12,46 +12,62 @@ st.set_page_config(page_title="Rutas Ciclistas ZMG", layout="wide")
 
 if 'rutas' not in st.session_state: st.session_state.rutas = None
 if 'zonas' not in st.session_state: st.session_state.zonas = None
+if 'nombres' not in st.session_state: st.session_state.nombres = None
+if 'clima' not in st.session_state: st.session_state.clima = None
 
 st.title("🚴 CICLISTA-MOVIL")
 
 with st.spinner("Sincronizando red vial metropolitana..."):
     G = cargar_mapa()
 
+# --- Lógica de Sugerencias (Tu código original restaurado) ---
+@st.cache_data(ttl=3600)
+def obtener_sugerencias(query):
+    if not query or len(query) < 3: return {}
+    sugerencias = {}
+    try:
+        res_arc = ArcGIS(user_agent="ciclista_movil_v2").geocode(
+            f"{query}, Jalisco, Mexico", exactly_one=False, limit=5, timeout=5
+        )
+        if res_arc:
+            for l in res_arc:
+                clave = f"📍 {l.address.split(', Jalisco')[0].strip()}"
+                if clave not in sugerencias: sugerencias[clave] = (l.latitude, l.longitude)
+    except: pass
+    return sugerencias
+
 # --- Interfaz Lateral ---
 st.sidebar.header("🔍 Buscador")
-# (Aquí mantienes tus inputs q_o, sel_o, q_d, sel_d y la lógica de obtener_sugerencias)
+q_o = st.sidebar.text_input("Origen:", "")
+sug_o = obtener_sugerencias(q_o)
+sel_o = st.sidebar.selectbox("Selecciona partida:", list(sug_o.keys()) if sug_o else ["Sin resultados"])
+
+q_d = st.sidebar.text_input("Destino:", "")
+sug_d = obtener_sugerencias(q_d)
+sel_d = st.sidebar.selectbox("Selecciona destino:", list(sug_d.keys()) if sug_d else ["Sin resultados"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📍 Capas del Mapa")
 ver_mibici = st.sidebar.toggle("Mostrar Estaciones MiBici", value=False)
 ver_talleres = st.sidebar.toggle("Mostrar Talleres Cercanos", value=False)
 
-# --- Botón de Cálculo ---
 if st.sidebar.button("🚀 Calcular Ruta Segura"):
-    # Sustituye estas coordenadas de ejemplo por tus sel_o y sel_d reales
-    # co_o, co_d = sug_o[sel_o], sug_d[sel_d]
-    # st.session_state.rutas = calcular_multiples_rutas(G, co_o, co_d, [], {})
-    st.session_state.rutas = calcular_multiples_rutas(G, (20.67, -103.34), (20.62, -103.24), [], {}) 
+    if sel_o in sug_o and sel_d in sug_d:
+        co_o, co_d = sug_o[sel_o], sug_d[sel_d]
+        with st.spinner("Calculando mejor ruta..."):
+            st.session_state.clima = obtener_clima(co_o[0], co_o[1])
+            st.session_state.nombres = (sel_o, sel_d)
+            st.session_state.rutas = calcular_multiples_rutas(G, co_o, co_d, [], st.session_state.clima)
+    else:
+        st.sidebar.error("Selecciona puntos válidos.")
 
-# --- Lógica de Visualización Principal ---
-
-# 1. Si hay rutas, mostramos el selector de perfil arriba del mapa
-ruta_para_renderizar = None
+# --- Renderizado ---
+ruta_activa = None
 if st.session_state.rutas:
     perfil = st.radio("Perfil de viaje:", list(st.session_state.rutas.keys()), index=1, horizontal=True)
-    ruta_para_renderizar = st.session_state.rutas[perfil]
+    ruta_activa = st.session_state.rutas[perfil]
 else:
-    st.info("👋 ¡Bienvenido! Selecciona un origen y destino para comenzar o activa las capas laterales.")
+    st.info("👋 ¡Bienvenido! Selecciona un origen y destino para comenzar.")
 
-# 2. Renderizado del Mapa (Siempre visible)
-m = renderizar_mapa_pro(
-    G, 
-    ruta_para_renderizar, 
-    st.session_state.zonas, 
-    ver_mibici, 
-    ver_talleres
-)
-
-# Mostramos el mapa. Usamos una key diferente para que Streamlit detecte el cambio de estado.
+m = renderizar_mapa_pro(G, ruta_activa, st.session_state.zonas, ver_mibici, ver_talleres)
 st_folium(m, width="100%", height=550, key="mapa_principal")
