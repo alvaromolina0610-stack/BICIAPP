@@ -1,3 +1,4 @@
+import requests # <
 import osmnx as ox
 import networkx as nx
 import streamlit as st
